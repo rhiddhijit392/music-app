@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Harmony Live - Sync Together</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- GunDB Realtime Peer-to-Peer Sync Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gun/sea.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #0b0f19;
+            color: #f3f4f6;
+        }
+        .glass-panel {
+            background: rgba(17, 24, 39, 0.7);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .glass-card {
+            background: rgba(31, 41, 55, 0.5);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .glow-accent {
+            box-shadow: 0 0 25px -5px rgba(99, 102, 241, 0.4);
+        }
+        @keyframes floatUp {
+            0% { transform: translateY(0) scale(0.8); opacity: 1; }
+            100% { transform: translateY(-120px) scale(1.4); opacity: 0; }
+        }
+        .floating-emoji {
+            position: absolute;
+            animation: floatUp 2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            pointer-events: none;
+            z-index: 50;
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.6);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.25);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between overflow-x-hidden relative">
+
+    <!-- Join Room Modal (Prompt for Name & Room Code) -->
+    <div id="joinModal" class="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="glass-panel p-8 rounded-3xl max-w-md w-full border border-gray-800 shadow-2xl text-center">
+            <div class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center mx-auto mb-5 glow-accent">
+                <i data-lucide="radio" class="w-8 h-8 text-white"></i>
+            </div>
+            <h2 class="text-xl font-extrabold text-white mb-2">Join Listening Room</h2>
+            <p class="text-xs text-gray-400 mb-6 leading-relaxed">
+                Enter your name and a room code. Anyone using the same code will share real-time audio, queue, and chat!
+            </p>
+            <form onsubmit="handleJoinRoom(event)" class="space-y-4 text-left">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-300 mb-1.5">Your Name</label>
+                    <input type="text" id="usernameInput" placeholder="e.g. Alex" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-300 mb-1.5">Room Code</label>
+                    <input type="text" id="roomCodeInput" placeholder="e.g. PARTY-101" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 font-mono transition">
+                </div>
+                <button type="submit" class="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold tracking-wide uppercase transition glow-accent">
+                    Enter Realtime Room
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Top Navigation Header -->
+    <header class="glass-panel sticky top-0 z-40 px-6 py-4 flex items-center justify-between border-b border-gray-800">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center glow-accent">
+                <i data-lucide="radio" class="w-6 h-6 text-white"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-lg leading-none bg-clip-text text-transparent bg-gradient-to-r from-white via-gray-200 to-indigo-300">
+                    Harmony Live
+                </h1>
+                <p class="text-xs text-gray-400 mt-1 flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Room Code: <span id="roomCodeDisplay" class="font-mono text-indigo-400 font-semibold">---</span>
+                </p>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <button onclick="copyRoomLink()" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-white/10 hover:bg-white/20 text-white flex items-center gap-1.5 transition">
+                <i data-lucide="share-2" class="w-3.5 h-3.5"></i>
+                Invite Friends
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content Grid -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- Left Column: Video Player & Queue Input -->
+        <div class="lg:col-span-2 flex flex-col gap-6">
+            
+            <!-- YouTube Player Container -->
+            <div class="relative w-full aspect-video rounded-2xl overflow-hidden glass-panel border border-gray-800 shadow-2xl group">
+                <div id="youtubePlayer" class="w-full h-full flex items-center justify-center bg-slate-950 text-gray-500 text-xs">
+                    Queue is empty. Add a YouTube track below to start playback!
+                </div>
+
+                <!-- Fallback Error Overlay -->
+                <div id="playerErrorOverlay" class="hidden absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-6 text-center z-30">
+                    <div class="w-14 h-14 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center mb-4 text-red-400">
+                        <i data-lucide="alert-triangle" class="w-7 h-7"></i>
+                    </div>
+                    <h3 class="text-lg font-bold text-white mb-2">Playback Restricted (Embed Error)</h3>
+                    <p class="text-xs text-gray-400 max-w-md mb-6 leading-relaxed">
+                        The video owner prevented embedding (Error 153). Watch directly on YouTube or skip to next track.
+                    </p>
+                    <div class="flex items-center gap-3">
+                        <a id="errorYtLink" target="_blank" href="#" class="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-semibold flex items-center gap-2 transition">
+                            Watch on YouTube <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+                        </a>
+                        <button onclick="playNextInQueue()" class="px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold border border-gray-700 transition">
+                            Skip to Next Track
+                        </button>
+                    </div>
+                </div>
+
+                <div id="reactionCanvas" class="absolute inset-0 pointer-events-none overflow-hidden z-20"></div>
+
+                <div class="absolute top-4 left-4 z-20 flex items-center gap-2 pointer-events-none">
+                    <span class="px-2.5 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase bg-black/60 backdrop-blur-md text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                        Live Peer Sync
+                    </span>
+                </div>
+            </div>
+
+            <!-- Seek Bar -->
+            <div class="glass-card p-3.5 rounded-xl flex items-center gap-3">
+                <span id="currentTimeDisplay" class="text-[10px] text-gray-400 font-mono w-10 text-right">0:00</span>
+                <input type="range" id="seekSlider" min="0" max="100" value="0" step="0.1" 
+                    class="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                    oninput="onSeekInput(this.value)" onchange="onSeekChange(this.value)">
+                <span id="durationDisplay" class="text-[10px] text-gray-400 font-mono w-10">0:00</span>
+            </div>
+
+            <!-- Reactions -->
+            <div class="glass-card p-4 rounded-xl flex items-center justify-between gap-4">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-400 font-medium mr-1">Reactions:</span>
+                    <button onclick="sendReaction('🔥')" class="px-3 py-1.5 rounded-lg bg-gray-800/80 hover:bg-gray-700 text-sm transition transform hover:scale-110">🔥</button>
+                    <button onclick="sendReaction('❤️')" class="px-3 py-1.5 rounded-lg bg-gray-800/80 hover:bg-gray-700 text-sm transition transform hover:scale-110">❤️</button>
+                    <button onclick="sendReaction('🎉')" class="px-3 py-1.5 rounded-lg bg-gray-800/80 hover:bg-gray-700 text-sm transition transform hover:scale-110">🎉</button>
+                    <button onclick="sendReaction('🚀')" class="px-3 py-1.5 rounded-lg bg-gray-800/80 hover:bg-gray-700 text-sm transition transform hover:scale-110">🚀</button>
+                </div>
+
+                <button onclick="resyncPlayer()" class="px-3 py-1.5 rounded-lg text-xs bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 border border-indigo-500/30 flex items-center gap-1.5 transition">
+                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                    Resync
+                </button>
+            </div>
+
+            <!-- Add Track Form -->
+            <div class="glass-panel p-5 rounded-2xl border border-gray-800">
+                <h2 class="text-sm font-bold text-gray-200 mb-3 flex items-center gap-2">
+                    <i data-lucide="plus-circle" class="w-4 h-4 text-indigo-400"></i>
+                    Add YouTube Link to Shared Queue
+                </h2>
+                <form onsubmit="handleAddTrack(event)" class="flex gap-2">
+                    <div class="relative flex-1">
+                        <i data-lucide="youtube" class="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2"></i>
+                        <input type="text" id="ytInput" placeholder="Paste YouTube link (e.g. https://www.youtube.com/watch?v=...)" 
+                            class="w-full bg-gray-900/90 border border-gray-700 rounded-xl py-2.5 pl-10 pr-4 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition">
+                    </div>
+                    <button type="submit" id="addTrackBtn" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition glow-accent">
+                        <span>Add Track</span>
+                        <i data-lucide="send" class="w-3.5 h-3.5"></i>
+                    </button>
+                </form>
+            </div>
+
+            <!-- Queue -->
+            <div class="glass-panel p-5 rounded-2xl border border-gray-800 flex-1">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-sm font-bold text-gray-200 flex items-center gap-2">
+                        <i data-lucide="list-music" class="w-4 h-4 text-purple-400"></i>
+                        Shared Queue
+                    </h2>
+                    <span id="queueCount" class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-gray-800 text-gray-400 border border-gray-700">0 Tracks</span>
+                </div>
+                <div id="queueList" class="space-y-2.5 max-h-[300px] overflow-y-auto pr-1"></div>
+            </div>
+
+        </div>
+
+        <!-- Right Column: Listeners & Realtime Chat -->
+        <div class="flex flex-col gap-6">
+
+            <!-- Active Listeners -->
+            <div class="glass-panel p-5 rounded-2xl border border-gray-800">
+                <h2 class="text-sm font-bold text-gray-200 mb-3 flex items-center justify-between">
+                    <span class="flex items-center gap-2">
+                        <i data-lucide="users" class="w-4 h-4 text-emerald-400"></i>
+                        Active Members
+                    </span>
+                    <span id="listenerCount" class="text-xs text-emerald-400 font-mono font-semibold">0 Online</span>
+                </h2>
+                <div id="listenerList" class="flex flex-wrap gap-2"></div>
+            </div>
+
+            <!-- Chat Box -->
+            <div class="glass-panel p-5 rounded-2xl border border-gray-800 flex-1 flex flex-col justify-between h-[420px]">
+                <div class="flex items-center justify-between pb-3 border-b border-gray-800">
+                    <h2 class="text-sm font-bold text-gray-200 flex items-center gap-2">
+                        <i data-lucide="message-square" class="w-4 h-4 text-indigo-400"></i>
+                        Room Live Chat
+                    </h2>
+                    <span class="text-[10px] text-gray-500">Peer Sync</span>
+                </div>
+
+                <div id="chatBox" class="flex-1 overflow-y-auto my-3 space-y-3 pr-1 text-xs"></div>
+
+                <form onsubmit="handleSendChat(event)" class="flex gap-2 pt-2 border-t border-gray-800">
+                    <input type="text" id="chatInput" placeholder="Type a message..." 
+                        class="flex-1 bg-gray-900/90 border border-gray-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition">
+                    <button type="submit" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition">
+                        <i data-lucide="send" class="w-3.5 h-3.5"></i>
+                    </button>
+                </form>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- YouTube API Script -->
+    <script src="https://www.youtube.com/iframe_api"></script>
+
+    <script>
+        // --- GunDB Initialization ---
+        const gun = Gun(['https://gun-manhattan.herokuapp.com/gun']);
+        let roomNode = null;
+
+        // --- State Management ---
+        let currentUser = "";
+        let currentRoomCode = "";
+        let player = null;
+        let isPlayerReady = false;
+        let currentTrackIndex = 0;
+
+        let queue = [];
+        let listeners = [];
+        let chatMessages = [];
+        let progressInterval = null;
+        let isUserSeeking = false;
+
+        function handleJoinRoom(e) {
+            e.preventDefault();
+            const nameInput = document.getElementById('usernameInput').value.trim();
+            const roomInput = document.getElementById('roomCodeInput').value.trim().toUpperCase();
+            
+            if (!nameInput || !roomInput) return;
+
+            currentUser = nameInput;
+            currentRoomCode = roomInput;
+
+            document.getElementById('roomCodeDisplay').innerText = currentRoomCode;
+            document.getElementById('joinModal').classList.add('hidden');
+            
+            // Connect to GunDB Room Node
+            roomNode = gun.get('harmony-rooms').get(currentRoomCode);
+
+            // Announce presence
+            roomNode.get('listeners').get(currentUser).put({ name: currentUser, joinedAt: Date.now() });
+
+            // Subscribe to real-time updates
+            subscribeToRoomUpdates();
+        }
+
+        function subscribeToRoomUpdates() {
+            // Listeners Sync
+            roomNode.get('listeners').map().on((data, key) => {
+                if (data && data.name) {
+                    if (!listeners.some(l => l.name === data.name)) {
+                        listeners.push(data);
+                        renderListeners();
+                    }
+                }
+            });
+
+            // Queue Sync
+            roomNode.get('queue').on((data) => {
+                if (data) {
+                    try {
+                        const syncedQueue = JSON.parse(data);
+                        queue = syncedQueue;
+                        renderQueue();
+                        if (isPlayerReady && queue.length > 0 && (!player.getVideoData || !player.getVideoData().video_id)) {
+                            playTrack(0);
+                        }
+                    } catch(err) {}
+                }
+            });
+
+            // Chat Sync
+            roomNode.get('chat').map().on((data) => {
+                if (data && data.time) {
+                    if (!chatMessages.some(m => m.id === data.id)) {
+                        chatMessages.push(data);
+                        chatMessages.sort((a,b) => a.timestamp - b.timestamp);
+                        renderChat();
+                    }
+                }
+            });
+        }
+
+        function updateRoomQueue() {
+            if (roomNode) {
+                roomNode.get('queue').put(JSON.stringify(queue));
+            }
+        }
+
+        // --- YouTube API Initialization ---
+        function onYouTubeIframeAPIReady() {
+            player = new YT.Player('youtubePlayer', {
+                host: 'https://www.youtube-nocookie.com',
+                playerVars: {
+                    'autoplay': 1,
+                    'controls': 1,
+                    'enablejsapi': 1,
+                    'origin': window.location.origin || 'http://localhost',
+                    'widget_referrer': window.location.href,
+                    'rel': 0
+                },
+                events: {
+                    'onReady': onPlayerReady,
+                    'onStateChange': onPlayerStateChange,
+                    'onError': onPlayerError
+                }
+            });
+        }
+
+        function onPlayerReady(event) {
+            isPlayerReady = true;
+            hideErrorOverlay();
+            startProgressTracker();
+        }
+
+        function onPlayerStateChange(event) {
+            if (event.data === YT.PlayerState.ENDED) {
+                playNextInQueue();
+            }
+        }
+
+        function onPlayerError(event) {
+            showErrorOverlay(queue[currentTrackIndex]?.id || "");
+        }
+
+        function showErrorOverlay(videoId) {
+            const overlay = document.getElementById('playerErrorOverlay');
+            const ytLink = document.getElementById('errorYtLink');
+            if (overlay && ytLink) {
+                ytLink.href = `https://www.youtube.com/watch?v=${videoId}`;
+                overlay.classList.remove('hidden');
+            }
+        }
+
+        function hideErrorOverlay() {
+            const overlay = document.getElementById('playerErrorOverlay');
+            if (overlay) overlay.classList.add('hidden');
+        }
+
+        // --- Progress Tracker & Seeker ---
+        function startProgressTracker() {
+            if (progressInterval) clearInterval(progressInterval);
+            progressInterval = setInterval(() => {
+                if (!isPlayerReady || !player || typeof player.getCurrentTime !== 'function') return;
+                if (isUserSeeking) return;
+
+                const currentTime = player.getCurrentTime() || 0;
+                const duration = player.getDuration() || 0;
+
+                if (duration > 0) {
+                    const percent = (currentTime / duration) * 100;
+                    document.getElementById('seekSlider').value = percent;
+                    document.getElementById('currentTimeDisplay').innerText = formatTime(currentTime);
+                    document.getElementById('durationDisplay').innerText = formatTime(duration);
+                }
+            }, 500);
+        }
+
+        function onSeekInput(val) { isUserSeeking = true; }
+
+        function onSeekChange(val) {
+            if (!isPlayerReady || !player) return;
+            const duration = player.getDuration() || 0;
+            const targetTime = (val / 100) * duration;
+            player.seekTo(targetTime, true);
+            isUserSeeking = false;
+        }
+
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+        }
+
+        // --- Queue & Track Logic ---
+        function extractYouTubeId(urlOrId) {
+            if (!urlOrId) return null;
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+            const match = urlOrId.match(regExp);
+            return (match && match[2].length === 11) ? match[2] : (urlOrId.length === 11 ? urlOrId : null);
+        }
+
+        async function fetchYouTubeTitle(videoId) {
+            try {
+                const response = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
+                if (response.ok) {
+                    const data = await response.json();
+                    return data.title || `YouTube Track (${videoId})`;
+                }
+            } catch (err) {}
+            return `YouTube Track (${videoId})`;
+        }
+
+        async function handleAddTrack(e) {
+            e.preventDefault();
+            const input = document.getElementById('ytInput');
+            const rawValue = input.value.trim();
+            const videoId = extractYouTubeId(rawValue);
+
+            if (!videoId) {
+                alert("Please enter a valid YouTube link or 11-character video ID.");
+                return;
+            }
+
+            const addBtn = document.getElementById('addTrackBtn');
+            addBtn.innerText = "Checking...";
+
+            const title = await fetchYouTubeTitle(videoId);
+
+            const newTrack = {
+                id: videoId,
+                title: title,
+                duration: "Video",
+                addedBy: currentUser
+            };
+
+            queue.push(newTrack);
+            input.value = '';
+            addBtn.innerHTML = `<span>Add Track</span><i data-lucide="send" class="w-3.5 h-3.5"></i>`;
+            lucide.createIcons();
+
+            updateRoomQueue();
+            addChatMessage(currentUser, `Added track: ${title}`, true);
+
+            if (isPlayerReady && queue.length === 1) {
+                playTrack(0);
+            }
+        }
+
+        function playTrack(index) {
+            if (index < 0 || index >= queue.length) return;
+            currentTrackIndex = index;
+            hideErrorOverlay();
+            if (isPlayerReady && player) {
+                player.loadVideoById(queue[currentTrackIndex].id);
+            }
+            renderQueue();
+        }
+
+        function playNextInQueue() {
+            if (currentTrackIndex + 1 < queue.length) {
+                playTrack(currentTrackIndex + 1);
+            }
+        }
+
+        function deleteTrack(index, event) {
+            event.stopPropagation();
+            const removed = queue.splice(index, 1)[0];
+            updateRoomQueue();
+            addChatMessage("System", `Removed track: ${removed.title}`, true);
+
+            if (queue.length === 0) {
+                currentTrackIndex = 0;
+                if (isPlayerReady && player) player.stopVideo();
+            } else if (index === currentTrackIndex) {
+                playTrack(Math.min(index, queue.length - 1));
+            } else if (index < currentTrackIndex) {
+                currentTrackIndex--;
+            }
+            renderQueue();
+        }
+
+        function moveTrack(index, direction, event) {
+            event.stopPropagation();
+            const targetIdx = index + direction;
+            if (targetIdx < 0 || targetIdx >= queue.length) return;
+
+            const temp = queue[index];
+            queue[index] = queue[targetIdx];
+            queue[targetIdx] = temp;
+
+            if (currentTrackIndex === index) currentTrackIndex = targetIdx;
+            else if (currentTrackIndex === targetIdx) currentTrackIndex = index;
+
+            updateRoomQueue();
+            renderQueue();
+        }
+
+        function renderQueue() {
+            const container = document.getElementById('queueList');
+            const countDisplay = document.getElementById('queueCount');
+            countDisplay.innerText = `${queue.length} Tracks`;
+            
+            if (queue.length === 0) {
+                container.innerHTML = `<div class="text-center py-6 text-xs text-gray-500">Queue is empty. Paste a YouTube link above to add music!</div>`;
+                return;
+            }
+
+            container.innerHTML = queue.map((track, idx) => {
+                const isPlaying = idx === currentTrackIndex;
+                return `
+                    <div onclick="playTrack(${idx})" class="flex items-center justify-between p-3 rounded-xl border cursor-pointer transition ${
+                        isPlaying 
+                        ? 'bg-indigo-950/40 border-indigo-500/50 shadow-lg' 
+                        : 'bg-gray-900/60 border-gray-800/80 hover:border-gray-700'
+                    }">
+                        <div class="flex items-center gap-3 overflow-hidden flex-1 mr-2">
+                            <div class="w-9 h-9 rounded-lg bg-gray-800 border border-gray-700 flex items-center justify-center shrink-0 group">
+                                ${isPlaying 
+                                    ? '<i data-lucide="disc" class="w-4 h-4 text-indigo-400 animate-spin"></i>' 
+                                    : '<i data-lucide="play" class="w-4 h-4 text-gray-400 group-hover:text-white"></i>'
+                                }
+                            </div>
+                            <div class="truncate flex-1">
+                                <h4 class="text-xs font-semibold ${isPlaying ? 'text-indigo-300' : 'text-gray-200'} truncate">${track.title}</h4>
+                                <p class="text-[10px] text-gray-400">Added by ${track.addedBy}</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center gap-1.5 shrink-0" onclick="event.stopPropagation()">
+                            <button onclick="moveTrack(${idx}, -1, event)" ${idx === 0 ? 'disabled class="opacity-30 cursor-not-allowed p-1.5 rounded-lg bg-gray-800 text-gray-400 text-xs"' : 'class="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs transition"'}>
+                                <i data-lucide="chevron-up" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button onclick="moveTrack(${idx}, 1, event)" ${idx === queue.length - 1 ? 'disabled class="opacity-30 cursor-not-allowed p-1.5 rounded-lg bg-gray-800 text-gray-400 text-xs"' : 'class="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs transition"'}>
+                                <i data-lucide="chevron-down" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button onclick="deleteTrack(${idx}, event)" class="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 transition" title="Delete Track">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            lucide.createIcons();
+        }
+
+        function renderListeners() {
+            const container = document.getElementById('listenerList');
+            const countDisplay = document.getElementById('listenerCount');
+            countDisplay.innerText = `${listeners.length} Online`;
+
+            container.innerHTML = listeners.map(l => `
+                <div class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gray-800/80 border border-gray-700/60">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    <span class="text-xs font-semibold text-white">${l.name}</span>
+                </div>
+            `).join('');
+        }
+
+        // --- Chat & Reactions ---
+        function sendReaction(emoji) {
+            const canvas = document.getElementById('reactionCanvas');
+            const el = document.createElement('div');
+            el.className = 'floating-emoji text-3xl';
+            el.innerText = emoji;
+            el.style.left = `${Math.random() * 80 + 10}%`;
+            el.style.bottom = '10px';
+            canvas.appendChild(el);
+
+            setTimeout(() => el.remove(), 2000);
+            addChatMessage(currentUser, `Reacted ${emoji}`, true);
+        }
+
+        function resyncPlayer() {
+            if (isPlayerReady && player) {
+                const currentTime = player.getCurrentTime();
+                player.seekTo(currentTime, true);
+            }
+        }
+
+        function handleSendChat(e) {
+            e.preventDefault();
+            const input = document.getElementById('chatInput');
+            const text = input.value.trim();
+            if (!text) return;
+
+            addChatMessage(currentUser, text, false);
+            input.value = '';
+        }
+
+        function addChatMessage(user, text, isSystem = false) {
+            const msgObj = {
+                id: Math.random().toString(36).substring(2, 9),
+                user,
+                text,
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                timestamp: Date.now(),
+                isSystem
+            };
+
+            if (roomNode) {
+                roomNode.get('chat').get(msgObj.id).put(msgObj);
+            }
+        }
+
+        function renderChat() {
+            const box = document.getElementById('chatBox');
+            box.innerHTML = chatMessages.map(msg => {
+                if (msg.isSystem) {
+                    return `
+                        <div class="text-center my-1.5">
+                            <span class="text-[10px] bg-gray-800/80 text-gray-400 px-2.5 py-1 rounded-full border border-gray-700/50">${msg.text}</span>
+                        </div>
+                    `;
+                }
+                const isMe = msg.user === currentUser;
+                return `
+                    <div class="flex flex-col ${isMe ? 'items-end' : 'items-start'}">
+                        <div class="flex items-center gap-1.5 mb-0.5">
+                            <span class="text-[10px] font-semibold ${isMe ? 'text-indigo-400' : 'text-emerald-400'}">${msg.user}</span>
+                            <span class="text-[9px] text-gray-500">${msg.time}</span>
+                        </div>
+                        <div class="px-3 py-1.5 rounded-xl max-w-[85%] ${isMe ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-gray-800 text-gray-200 rounded-tl-none'} border border-white/5">
+                            ${msg.text}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function copyRoomLink() {
+            navigator.clipboard.writeText(window.location.href);
+            alert(`Room link copied! Join code: ${currentRoomCode}`);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            renderQueue();
+            renderListeners();
+            renderChat();
+            lucide.createIcons();
+        });
+    </script>
+</body>
+</html>
