@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Harmony Live - Sync Together</title>
+    <title>Harmony Live - Firebase Sync</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- GunDB Realtime Peer-to-Peer Sync Libraries -->
-    <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/gun/sea.js"></script>
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
         body {
@@ -58,7 +58,7 @@
 </head>
 <body class="min-h-screen flex flex-col justify-between overflow-x-hidden relative">
 
-    <!-- Join Room Modal (Prompt for Name & Room Code) -->
+    <!-- Join Room Modal -->
     <div id="joinModal" class="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
         <div class="glass-panel p-8 rounded-3xl max-w-md w-full border border-gray-800 shadow-2xl text-center">
             <div class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center mx-auto mb-5 glow-accent">
@@ -66,7 +66,7 @@
             </div>
             <h2 class="text-xl font-extrabold text-white mb-2">Join Listening Room</h2>
             <p class="text-xs text-gray-400 mb-6 leading-relaxed">
-                Enter your name and a room code. Anyone using the same code will share real-time audio, queue, and chat!
+                Enter your name and a room code. Anyone using the same code will share real-time music and chat!
             </p>
             <form onsubmit="handleJoinRoom(event)" class="space-y-4 text-left">
                 <div>
@@ -80,7 +80,7 @@
                         class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 font-mono transition">
                 </div>
                 <button type="submit" class="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold tracking-wide uppercase transition glow-accent">
-                    Enter Realtime Room
+                    Enter Firebase Room
                 </button>
             </form>
         </div>
@@ -147,7 +147,7 @@
                 <div class="absolute top-4 left-4 z-20 flex items-center gap-2 pointer-events-none">
                     <span class="px-2.5 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase bg-black/60 backdrop-blur-md text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
                         <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                        Live Peer Sync
+                        Firebase Cloud Sync
                     </span>
                 </div>
             </div>
@@ -232,7 +232,7 @@
                         <i data-lucide="message-square" class="w-4 h-4 text-indigo-400"></i>
                         Room Live Chat
                     </h2>
-                    <span class="text-[10px] text-gray-500">Peer Sync</span>
+                    <span class="text-[10px] text-gray-500">Firebase Sync</span>
                 </div>
 
                 <div id="chatBox" class="flex-1 overflow-y-auto my-3 space-y-3 pr-1 text-xs"></div>
@@ -254,9 +254,13 @@
     <script src="https://www.youtube.com/iframe_api"></script>
 
     <script>
-        // --- GunDB Initialization ---
-        const gun = Gun(['https://gun-manhattan.herokuapp.com/gun']);
-        let roomNode = null;
+        // --- Firebase Initialization ---
+        const firebaseConfig = {
+            databaseURL: "https://harmony-live-default-rtdb.firebaseio.com"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+        let roomRef = null;
 
         // --- State Management ---
         let currentUser = "";
@@ -284,56 +288,63 @@
             document.getElementById('roomCodeDisplay').innerText = currentRoomCode;
             document.getElementById('joinModal').classList.add('hidden');
             
-            // Connect to GunDB Room Node
-            roomNode = gun.get('harmony-rooms').get(currentRoomCode);
+            // Connect to Firebase Room Reference
+            roomRef = db.ref('rooms/' + currentRoomCode);
 
-            // Announce presence
-            roomNode.get('listeners').get(currentUser).put({ name: currentUser, joinedAt: Date.now() });
+            // Register Listener presence & cleanup on disconnect
+            const userRef = roomRef.child('listeners/' + currentUser.replace(/[.#$[\]]/g, '_'));
+            userRef.set({ name: currentUser });
+            userRef.onDisconnect().remove();
 
-            // Subscribe to real-time updates
-            subscribeToRoomUpdates();
+            // Subscribe to real-time database changes
+            subscribeToFirebaseSync();
         }
 
-        function subscribeToRoomUpdates() {
+        function subscribeToFirebaseSync() {
             // Listeners Sync
-            roomNode.get('listeners').map().on((data, key) => {
-                if (data && data.name) {
-                    if (!listeners.some(l => l.name === data.name)) {
-                        listeners.push(data);
-                        renderListeners();
-                    }
-                }
+            roomRef.child('listeners').on('value', (snapshot) => {
+                const data = snapshot.val();
+                listeners = data ? Object.values(data) : [];
+                renderListeners();
             });
 
             // Queue Sync
-            roomNode.get('queue').on((data) => {
-                if (data) {
-                    try {
-                        const syncedQueue = JSON.parse(data);
-                        queue = syncedQueue;
-                        renderQueue();
-                        if (isPlayerReady && queue.length > 0 && (!player.getVideoData || !player.getVideoData().video_id)) {
-                            playTrack(0);
-                        }
-                    } catch(err) {}
+            roomRef.child('queue').on('value', (snapshot) => {
+                const data = snapshot.val();
+                queue = data ? data : [];
+                renderQueue();
+                if (isPlayerReady && queue.length > 0 && currentTrackIndex >= queue.length) {
+                    playTrack(0);
+                } else if (isPlayerReady && queue.length > 0 && player.getPlayerState() !== YT.PlayerState.PLAYING && !player.getVideoData().video_id) {
+                    playTrack(currentTrackIndex);
+                }
+            });
+
+            // Active Track Sync
+            roomRef.child('currentTrackIndex').on('value', (snapshot) => {
+                const idx = snapshot.val();
+                if (idx !== null && idx !== currentTrackIndex && idx < queue.length) {
+                    currentTrackIndex = idx;
+                    if (isPlayerReady && player) {
+                        player.loadVideoById(queue[currentTrackIndex].id);
+                    }
+                    renderQueue();
                 }
             });
 
             // Chat Sync
-            roomNode.get('chat').map().on((data) => {
-                if (data && data.time) {
-                    if (!chatMessages.some(m => m.id === data.id)) {
-                        chatMessages.push(data);
-                        chatMessages.sort((a,b) => a.timestamp - b.timestamp);
-                        renderChat();
-                    }
+            roomRef.child('chat').limitToLast(50).on('child_added', (snapshot) => {
+                const msg = snapshot.val();
+                if (msg && !chatMessages.some(m => m.id === msg.id)) {
+                    chatMessages.push(msg);
+                    renderChat();
                 }
             });
         }
 
-        function updateRoomQueue() {
-            if (roomNode) {
-                roomNode.get('queue').put(JSON.stringify(queue));
+        function updateCloudQueue() {
+            if (roomRef) {
+                roomRef.child('queue').set(queue);
             }
         }
 
@@ -361,6 +372,9 @@
             isPlayerReady = true;
             hideErrorOverlay();
             startProgressTracker();
+            if (queue.length > 0) {
+                playTrack(currentTrackIndex);
+            }
         }
 
         function onPlayerStateChange(event) {
@@ -469,8 +483,8 @@
             addBtn.innerHTML = `<span>Add Track</span><i data-lucide="send" class="w-3.5 h-3.5"></i>`;
             lucide.createIcons();
 
-            updateRoomQueue();
-            addChatMessage(currentUser, `Added track: ${title}`, true);
+            updateCloudQueue();
+            addSystemMessage(`${currentUser} added track: ${title}`);
 
             if (isPlayerReady && queue.length === 1) {
                 playTrack(0);
@@ -481,6 +495,9 @@
             if (index < 0 || index >= queue.length) return;
             currentTrackIndex = index;
             hideErrorOverlay();
+            if (roomRef) {
+                roomRef.child('currentTrackIndex').set(currentTrackIndex);
+            }
             if (isPlayerReady && player) {
                 player.loadVideoById(queue[currentTrackIndex].id);
             }
@@ -496,16 +513,18 @@
         function deleteTrack(index, event) {
             event.stopPropagation();
             const removed = queue.splice(index, 1)[0];
-            updateRoomQueue();
-            addChatMessage("System", `Removed track: ${removed.title}`, true);
+            updateCloudQueue();
+            addSystemMessage(`Removed track: ${removed.title}`);
 
             if (queue.length === 0) {
                 currentTrackIndex = 0;
+                if (roomRef) roomRef.child('currentTrackIndex').set(0);
                 if (isPlayerReady && player) player.stopVideo();
             } else if (index === currentTrackIndex) {
                 playTrack(Math.min(index, queue.length - 1));
             } else if (index < currentTrackIndex) {
                 currentTrackIndex--;
+                if (roomRef) roomRef.child('currentTrackIndex').set(currentTrackIndex);
             }
             renderQueue();
         }
@@ -522,7 +541,8 @@
             if (currentTrackIndex === index) currentTrackIndex = targetIdx;
             else if (currentTrackIndex === targetIdx) currentTrackIndex = index;
 
-            updateRoomQueue();
+            updateCloudQueue();
+            if (roomRef) roomRef.child('currentTrackIndex').set(currentTrackIndex);
             renderQueue();
         }
 
@@ -599,7 +619,7 @@
             canvas.appendChild(el);
 
             setTimeout(() => el.remove(), 2000);
-            addChatMessage(currentUser, `Reacted ${emoji}`, true);
+            addChatMessage(currentUser, `Reacted ${emoji}`, false);
         }
 
         function resyncPlayer() {
@@ -619,19 +639,20 @@
             input.value = '';
         }
 
-        function addChatMessage(user, text, isSystem = false) {
+        function addChatMessage(user, text, isSystem) {
+            if (!roomRef) return;
             const msgObj = {
-                id: Math.random().toString(36).substring(2, 9),
+                id: db.ref().push().key,
                 user,
                 text,
                 time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                timestamp: Date.now(),
                 isSystem
             };
+            roomRef.child('chat').push(msgObj);
+        }
 
-            if (roomNode) {
-                roomNode.get('chat').get(msgObj.id).put(msgObj);
-            }
+        function addSystemMessage(text) {
+            addChatMessage("System", text, true);
         }
 
         function renderChat() {
@@ -663,7 +684,7 @@
 
         function copyRoomLink() {
             navigator.clipboard.writeText(window.location.href);
-            alert(`Room link copied! Join code: ${currentRoomCode}`);
+            alert(`Room link copied! Friends can join using room code: ${currentRoomCode}`);
         }
 
         document.addEventListener('DOMContentLoaded', () => {
