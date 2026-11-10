@@ -3,14 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Harmony Live - Firebase Sync</title>
+    <title>Harmony Live - Zero Config Sync</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Firebase SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+    <!-- Simple Peer-to-Peer Cloud Sync Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/trystero/0.20.1/trystero-torrent.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
         body {
@@ -66,7 +65,7 @@
             </div>
             <h2 class="text-xl font-extrabold text-white mb-2">Join Listening Room</h2>
             <p class="text-xs text-gray-400 mb-6 leading-relaxed">
-                Enter your name and a room code. Anyone using the same code will share real-time music and chat!
+                Enter your name and any room code. Friends using the same code connect instantly with zero setup!
             </p>
             <form onsubmit="handleJoinRoom(event)" class="space-y-4 text-left">
                 <div>
@@ -76,11 +75,11 @@
                 </div>
                 <div>
                     <label class="block text-xs font-semibold text-gray-300 mb-1.5">Room Code</label>
-                    <input type="text" id="roomCodeInput" placeholder="e.g. PARTY-101" required
+                    <input type="text" id="roomCodeInput" placeholder="e.g. JAM-1234" required
                         class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 font-mono transition">
                 </div>
                 <button type="submit" class="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold tracking-wide uppercase transition glow-accent">
-                    Enter Firebase Room
+                    Enter Room
                 </button>
             </form>
         </div>
@@ -147,7 +146,7 @@
                 <div class="absolute top-4 left-4 z-20 flex items-center gap-2 pointer-events-none">
                     <span class="px-2.5 py-1 rounded-md text-[10px] font-bold tracking-wider uppercase bg-black/60 backdrop-blur-md text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
                         <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                        Firebase Cloud Sync
+                        Zero-Config Sync Active
                     </span>
                 </div>
             </div>
@@ -232,7 +231,7 @@
                         <i data-lucide="message-square" class="w-4 h-4 text-indigo-400"></i>
                         Room Live Chat
                     </h2>
-                    <span class="text-[10px] text-gray-500">Firebase Sync</span>
+                    <span class="text-[10px] text-gray-500">P2P Sync</span>
                 </div>
 
                 <div id="chatBox" class="flex-1 overflow-y-auto my-3 space-y-3 pr-1 text-xs"></div>
@@ -254,15 +253,12 @@
     <script src="https://www.youtube.com/iframe_api"></script>
 
     <script>
-        // --- Firebase Initialization ---
-        const firebaseConfig = {
-            databaseURL: "https://harmony-live-default-rtdb.firebaseio.com"
-        };
-        firebase.initializeApp(firebaseConfig);
-        const db = firebase.database();
-        let roomRef = null;
+        // --- Zero-Config P2P Room Sync ---
+        let room = null;
+        let sendData = null;
+        let listenersMap = {};
 
-        // --- State Management ---
+        // State Management
         let currentUser = "";
         let currentRoomCode = "";
         let player = null;
@@ -287,65 +283,75 @@
 
             document.getElementById('roomCodeDisplay').innerText = currentRoomCode;
             document.getElementById('joinModal').classList.add('hidden');
-            
-            // Connect to Firebase Room Reference
-            roomRef = db.ref('rooms/' + currentRoomCode);
 
-            // Register Listener presence & cleanup on disconnect
-            const userRef = roomRef.child('listeners/' + currentUser.replace(/[.#$[\]]/g, '_'));
-            userRef.set({ name: currentUser });
-            userRef.onDisconnect().remove();
-
-            // Subscribe to real-time database changes
-            subscribeToFirebaseSync();
+            initP2PRoom(currentRoomCode);
         }
 
-        function subscribeToFirebaseSync() {
-            // Listeners Sync
-            roomRef.child('listeners').on('value', (snapshot) => {
-                const data = snapshot.val();
-                listeners = data ? Object.values(data) : [];
-                renderListeners();
-            });
+        function initP2PRoom(roomCode) {
+            try {
+                // Initialize Trystero P2P Room based on room code
+                const appId = 'harmony-live-app-v2';
+                room = trystero.joinRoom({ appId }, 'harmony-' + roomCode);
 
-            // Queue Sync
-            roomRef.child('queue').on('value', (snapshot) => {
-                const data = snapshot.val();
-                queue = data ? data : [];
-                renderQueue();
-                if (isPlayerReady && queue.length > 0 && currentTrackIndex >= queue.length) {
-                    playTrack(0);
-                } else if (isPlayerReady && queue.length > 0 && player.getPlayerState() !== YT.PlayerState.PLAYING && !player.getVideoData().video_id) {
-                    playTrack(currentTrackIndex);
-                }
-            });
+                const [sendQueue, getQueue] = room.makeAction('queue');
+                const [sendChat, getChat] = room.makeAction('chat');
+                const [sendTrackIdx, getTrackIdx] = room.makeAction('trackIdx');
+                const [sendPresence, getPresence] = room.makeAction('presence');
 
-            // Active Track Sync
-            roomRef.child('currentTrackIndex').on('value', (snapshot) => {
-                const idx = snapshot.val();
-                if (idx !== null && idx !== currentTrackIndex && idx < queue.length) {
-                    currentTrackIndex = idx;
-                    if (isPlayerReady && player) {
-                        player.loadVideoById(queue[currentTrackIndex].id);
-                    }
+                sendData = {
+                    queue: sendQueue,
+                    chat: sendChat,
+                    trackIdx: sendTrackIdx,
+                    presence: sendPresence
+                };
+
+                // Listen for peer actions
+                getQueue(remoteQueue => {
+                    queue = remoteQueue;
                     renderQueue();
-                }
-            });
+                });
 
-            // Chat Sync
-            roomRef.child('chat').limitToLast(50).on('child_added', (snapshot) => {
-                const msg = snapshot.val();
-                if (msg && !chatMessages.some(m => m.id === msg.id)) {
+                getChat(msg => {
                     chatMessages.push(msg);
                     renderChat();
-                }
-            });
+                });
+
+                getTrackIdx(idx => {
+                    if (idx !== currentTrackIndex && idx < queue.length) {
+                        currentTrackIndex = idx;
+                        if (isPlayerReady && player) {
+                            player.loadVideoById(queue[currentTrackIndex].id);
+                        }
+                        renderQueue();
+                    }
+                });
+
+                getPresence(peerName => {
+                    listenersMap[peerName] = true;
+                    updateListenersList();
+                    // Broadcast back so new peer knows we are here
+                    sendData.presence(currentUser);
+                });
+
+                // Add self & broadcast presence
+                listenersMap[currentUser] = true;
+                updateListenersList();
+
+                setTimeout(() => {
+                    if (sendData && sendData.presence) {
+                        sendData.presence(currentUser);
+                    }
+                }, 1000);
+
+                addSystemMessage(`${currentUser} joined room ${roomCode}`);
+            } catch(err) {
+                console.warn("P2P Init note:", err);
+            }
         }
 
-        function updateCloudQueue() {
-            if (roomRef) {
-                roomRef.child('queue').set(queue);
-            }
+        function updateListenersList() {
+            listeners = Object.keys(listenersMap).map(name => ({ name }));
+            renderListeners();
         }
 
         // --- YouTube API Initialization ---
@@ -372,9 +378,6 @@
             isPlayerReady = true;
             hideErrorOverlay();
             startProgressTracker();
-            if (queue.length > 0) {
-                playTrack(currentTrackIndex);
-            }
         }
 
         function onPlayerStateChange(event) {
@@ -483,8 +486,12 @@
             addBtn.innerHTML = `<span>Add Track</span><i data-lucide="send" class="w-3.5 h-3.5"></i>`;
             lucide.createIcons();
 
-            updateCloudQueue();
+            if (sendData && sendData.queue) {
+                sendData.queue(queue);
+            }
+
             addSystemMessage(`${currentUser} added track: ${title}`);
+            renderQueue();
 
             if (isPlayerReady && queue.length === 1) {
                 playTrack(0);
@@ -495,9 +502,11 @@
             if (index < 0 || index >= queue.length) return;
             currentTrackIndex = index;
             hideErrorOverlay();
-            if (roomRef) {
-                roomRef.child('currentTrackIndex').set(currentTrackIndex);
+            
+            if (sendData && sendData.trackIdx) {
+                sendData.trackIdx(currentTrackIndex);
             }
+
             if (isPlayerReady && player) {
                 player.loadVideoById(queue[currentTrackIndex].id);
             }
@@ -513,18 +522,19 @@
         function deleteTrack(index, event) {
             event.stopPropagation();
             const removed = queue.splice(index, 1)[0];
-            updateCloudQueue();
+            
+            if (sendData && sendData.queue) sendData.queue(queue);
+            if (sendData && sendData.trackIdx) sendData.trackIdx(currentTrackIndex);
+
             addSystemMessage(`Removed track: ${removed.title}`);
 
             if (queue.length === 0) {
                 currentTrackIndex = 0;
-                if (roomRef) roomRef.child('currentTrackIndex').set(0);
                 if (isPlayerReady && player) player.stopVideo();
             } else if (index === currentTrackIndex) {
                 playTrack(Math.min(index, queue.length - 1));
             } else if (index < currentTrackIndex) {
                 currentTrackIndex--;
-                if (roomRef) roomRef.child('currentTrackIndex').set(currentTrackIndex);
             }
             renderQueue();
         }
@@ -541,8 +551,9 @@
             if (currentTrackIndex === index) currentTrackIndex = targetIdx;
             else if (currentTrackIndex === targetIdx) currentTrackIndex = index;
 
-            updateCloudQueue();
-            if (roomRef) roomRef.child('currentTrackIndex').set(currentTrackIndex);
+            if (sendData && sendData.queue) sendData.queue(queue);
+            if (sendData && sendData.trackIdx) sendData.trackIdx(currentTrackIndex);
+
             renderQueue();
         }
 
@@ -619,7 +630,7 @@
             canvas.appendChild(el);
 
             setTimeout(() => el.remove(), 2000);
-            addChatMessage(currentUser, `Reacted ${emoji}`, false);
+            sendChatMessage(currentUser, `Reacted ${emoji}`, true);
         }
 
         function resyncPlayer() {
@@ -635,24 +646,28 @@
             const text = input.value.trim();
             if (!text) return;
 
-            addChatMessage(currentUser, text, false);
+            sendChatMessage(currentUser, text, false);
             input.value = '';
         }
 
-        function addChatMessage(user, text, isSystem) {
-            if (!roomRef) return;
+        function sendChatMessage(user, text, isSystem) {
             const msgObj = {
-                id: db.ref().push().key,
                 user,
                 text,
                 time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                 isSystem
             };
-            roomRef.child('chat').push(msgObj);
+
+            chatMessages.push(msgObj);
+            renderChat();
+
+            if (sendData && sendData.chat) {
+                sendData.chat(msgObj);
+            }
         }
 
         function addSystemMessage(text) {
-            addChatMessage("System", text, true);
+            sendChatMessage("System", text, true);
         }
 
         function renderChat() {
